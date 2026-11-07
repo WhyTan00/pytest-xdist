@@ -154,6 +154,9 @@ def test_auto_detect_cpus_psutil(
     monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
     monkeypatch.delattr(os, "process_cpu_count", raising=False)
     monkeypatch.setattr(psutil, "cpu_count", lambda logical=True: 84 if logical else 42)
+    monkeypatch.setattr(
+        psutil.Process, "cpu_affinity", lambda self: list(range(84)), raising=False
+    )
 
     config = pytester.parseconfigure("-nauto")
     check_options(config)
@@ -162,6 +165,89 @@ def test_auto_detect_cpus_psutil(
     config = pytester.parseconfigure("-nlogical")
     check_options(config)
     assert config.getoption("numprocesses") == 84
+
+
+@pytest.mark.parametrize("mode", ["auto", "logical"])
+def test_auto_detect_cpus_psutil_affinity(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    from xdist.plugin import pytest_cmdline_main as check_options
+
+    psutil = pytest.importorskip("psutil")
+    monkeypatch.delenv("PYTEST_XDIST_AUTO_NUM_WORKERS", raising=False)
+    monkeypatch.delitem(getattr(sys, "_xoptions", {}), "cpu_count", raising=False)
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(psutil, "cpu_count", lambda logical=True: 84 if logical else 42)
+    monkeypatch.setattr(
+        psutil.Process, "cpu_affinity", lambda self: [2, 4, 6], raising=False
+    )
+
+    config = pytester.parseconfigure(f"-n{mode}")
+    check_options(config)
+    assert config.getoption("numprocesses") == 3
+
+
+@pytest.mark.parametrize("mode, expected", [("auto", 42), ("logical", 84)])
+@pytest.mark.parametrize("reason", ["missing", "unsupported", "denied", "empty"])
+def test_auto_detect_cpus_psutil_affinity_unavailable(
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected: int,
+    reason: str,
+) -> None:
+    from xdist.plugin import pytest_cmdline_main as check_options
+
+    psutil = pytest.importorskip("psutil")
+    monkeypatch.delenv("PYTEST_XDIST_AUTO_NUM_WORKERS", raising=False)
+    monkeypatch.delitem(getattr(sys, "_xoptions", {}), "cpu_count", raising=False)
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
+    monkeypatch.delattr(os, "process_cpu_count", raising=False)
+    monkeypatch.setattr(psutil, "cpu_count", lambda logical=True: 84 if logical else 42)
+
+    def unavailable_affinity(self: object) -> list[int]:
+        if reason == "unsupported":
+            raise NotImplementedError
+        if reason == "denied":
+            raise psutil.AccessDenied
+        return []
+
+    if reason == "missing":
+        monkeypatch.delattr(psutil.Process, "cpu_affinity", raising=False)
+    else:
+        monkeypatch.setattr(
+            psutil.Process, "cpu_affinity", unavailable_affinity, raising=False
+        )
+
+    config = pytester.parseconfigure(f"-n{mode}")
+    check_options(config)
+    assert config.getoption("numprocesses") == expected
+
+
+@pytest.mark.parametrize("mode", ["auto", "logical"])
+@pytest.mark.skipif(
+    not hasattr(os, "sched_setaffinity"), reason="requires process CPU affinity"
+)
+def test_auto_detect_cpus_psutil_affinity_subprocess(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    pytest.importorskip("psutil")
+    monkeypatch.delenv("PYTEST_XDIST_AUTO_NUM_WORKERS", raising=False)
+    monkeypatch.delenv("PYTHON_CPU_COUNT", raising=False)
+    pytester.makepyfile("def test_pass(): pass")
+    script = pytester.makepyfile(
+        run_restricted="""
+        import os
+        import pytest
+
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+        raise SystemExit(pytest.main())
+        """
+    )
+    result = pytester.run(sys.executable, str(script), f"-n{mode}")
+    result.assert_outcomes(passed=1)
+    result.stdout.re_match_lines([r"1 worker \[1 item\]"])
 
 
 def test_auto_detect_cpus_os(

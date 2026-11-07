@@ -1,0 +1,1 @@
+Respect process CPU affinity when using ``psutil`` to determine the number of workers for ``-n auto`` and ``-n logical``.

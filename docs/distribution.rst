@@ -12,12 +12,15 @@ noticeable amount of time.
 
 With ``-n auto``, pytest-xdist will use as many processes as your computer
 has physical CPU cores.
+When using ``psutil``, the count is also capped by the process's CPU affinity,
+if available, so workers do not outnumber the CPUs the process can run on.
 
 Use ``-n logical`` to use the number of *logical* CPU cores rather than
 physical ones. This currently requires either Python 3.13 or higher, or the
 `psutil <https://pypi.org/project/psutil/>`__ package to be installed. If
 neither method is available or if they all fail to determine the number of
 logical CPUs, fall back to ``-n auto`` behavior.
+The ``psutil`` count is capped by CPU affinity for ``-n logical`` as well.
 
 Pass a number, e.g. ``-n 8``, to specify the number of processes explicitly.
 

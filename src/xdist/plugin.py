@@ -88,6 +88,13 @@ def _auto_num_workers_psutil(config: pytest.Config) -> int | None:
         use_logical: bool = config.option.numprocesses == "logical"
         count = psutil.cpu_count(logical=use_logical) or psutil.cpu_count()
         if count:
+            try:
+                affinity = psutil.Process().cpu_affinity()
+            except (AttributeError, NotImplementedError, psutil.Error):
+                pass
+            else:
+                if affinity:
+                    count = min(count, len(affinity))
             return count
         return None
 
